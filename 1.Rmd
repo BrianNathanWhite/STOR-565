@@ -84,6 +84,9 @@ students3 %>%
 #directly
 students3 %>%
   mutate(grade = ifelse(score < 80, 'C', ifelse(score < 90, 'B', 'A')))
+
+#base r, directly
+students3$grade <- ifelse(score < 80, 'C', ifelse(score < 90, 'B', 'A'))
 ```
 
 
@@ -91,7 +94,6 @@ students3 %>%
 
 ```{r}
 mu <- apply(X, 2, mean)
-
 X.cent <- t(X) - mu
 X.var <- (1/3)*X.cent%*%t(X.cent)
 X.var
@@ -124,7 +126,8 @@ bisect <- function(f, lower, upper, tol = 10^-6, maxit = 1000){
   while(i <= maxit) {
     c <- (lower + upper)/2
     if(f(c) == 0 | (upper - lower)/2 < tol) {
-      return(c)
+      l <- list(c, f(c), i)
+      return(l)
       break
     }
     #increment counter
@@ -147,9 +150,9 @@ f <- function(x) x^3 - 2*x - 1
 plot(f, xlim = c(-2, 2))
 abline(0, 0, col='blue')
 
-root1 <- bisect(f, 1, 2)
-root2 <- bisect(f, -.8, 0)
-root3 <- bisect(f, -2, -.9)
+root1 <- bisect(f, 1, 2)[1]
+root2 <- bisect(f, -.8, 0)[1]
+root3 <- bisect(f, -2, -.9)[1]
 plot(f, xlim = c(-2, 2))
 abline(0, 0, col='blue')
 
@@ -188,7 +191,7 @@ salaries %>%
 data(iris)
 
 iris %>%
-  mutate(id = row_number()) %>%
+  mutate(id = row_number()) %>% 
   group_by(Species) %>%
   mutate(subset = cut(sample(row_number()), breaks = 5, labels = 1:5)) %>%
   group_by(subset) %>%
@@ -233,5 +236,37 @@ salaries %>%
   filter(dept %in% c('Computer Science', 'Mathematics', 'Statistics and Operations Res', 'Physics-Astronomy')) %>%
   ggplot(aes(x = totalsal, col = dept)) +
   geom_density() 
+```
+
+```{r}
+# recall the "relevant" dataset from above
+salaries <- read.csv('data/unc_salary_data.csv')
+relevant <- subset(salaries, select = c(name, dept, age, totalsal))
+
+opar <- par(mfrow = c(1,3))
+for(Dept in c("Computer Science", "Mathematics", "Physics-Astronomy")) {
+Salaries <- subset(relevant, dept == Dept)$totalsal
+h <- hist(Salaries, ylim = c(0, 1e-5), # to fix plotting ranges
+sub = paste("Department: ", Dept), freq = FALSE)
+
+# Empirical density curve
+lines(
+density(Salaries), add = TRUE, # add to the currect canvas
+xlim = range(h$breaks), ylim = c(0, 1e-5), # to match plotting ranges
+col = "steelblue4",
+main = "", sub = "", xlab = "", ylab = "" # to supress labels
+)
+# Normal density curve
+curve(
+dnorm(x, mean = mean(Salaries), sd = sd(Salaries)), add = TRUE, # add to the currect canvas
+xlim = range(h$breaks), ylim = c(0, 1e-5), # to match plotting ranges
+col = "violetred4",
+main = "", sub = "", xlab = "", ylab = "" # to supress labels
+)
+legend("topright",
+legend = c("Kernel Density", "Normal Density"),
+col = c("steelblue4", "violetred4"), lty = 1, cex = 0.8)
+}
+par(opar)
 ```
 

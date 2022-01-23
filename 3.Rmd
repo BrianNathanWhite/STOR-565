@@ -1,0 +1,19 @@
+---
+title: '3'
+author: "Brian N. White"
+date: "1/22/2022"
+output: html_document
+---
+
+**Exercise 1**
+
+```{r load relevant packages}
+library('MASS')
+data('Boston')
+```
+
+```{r}
+mod1 <- lm(crim ~ medv + dis + indus, data = Boston)
+summary(mod1)
+```
+
