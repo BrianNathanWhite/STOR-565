@@ -1,19 +1,73 @@
 ---
-title: '3'
+title: 'STOR 565: Computational HW 3'
 author: "Brian N. White"
-date: "1/22/2022"
+date: "2/14/2022"
 output: html_document
 ---
 
-**Exercise 1**
+```{r}
+library(leaps)
+library(tidyverse)
+library(ggplot2)
+```
 
-```{r load relevant packages}
-library('MASS')
-data('Boston')
+### Model Selection
+
+**1.1**
+
+```{r}
+set.seed(1305) # for reproducibility
+n <- 100 # set sample size
+x <- rnorm(n) # simulate predictor
+eps <- rnorm(n) # simulate gaussian noise
+``` 
+
+**1.2**
+
+```{r}
+# set true parameter values
+beta0 <- 3
+beta1 <- 2
+beta2 <- -3
+beta3 <- 0.3
+
+
+y <- beta0 + beta1*x + beta2*x^2 + beta3*x^3 + eps # generate y values
 ```
 
 ```{r}
-mod1 <- lm(crim ~ medv + dis + indus, data = Boston)
-summary(mod1)
+degree <- 10 # degree of polynomial
+design <- poly(x, degree = degree, raw = T, simple = T) # design matrix
+df <- data.frame(design, y) # data frame for use in regsubsets
+
+model_regsubsets <- regsubsets(y ~ ., data = df, method = 'exhaustive', nvmax = 10)
+model_summary <- summary(model_regsubsets)
+
+
+metrics <- c('adjr2', 'bic', 'cp')
+
+# use a loop to plot results for each metric
+for(i in 1:length(metrics)) {
+  plot_df <- data.frame(x = 1:10, y = model_summary[[metrics[i]]])
+  
+  #adjr2 case
+  if(i == 1) {
+  plot_df %>%
+    ggplot(aes(x = x, y = y)) +
+    geom_line(col = 'sky blue') +
+    geom_vline(xintercept = which.max(plot_df$y), col = 'red', linetype = 'dotted') + #adjr2 is maximized
+    labs(x = 'degree', y = metrics[i]) -> p
+  } else { 
+    plot_df %>%
+    ggplot(aes(x = x, y = y)) +
+    geom_line(col = 'sky blue') +
+    geom_vline(xintercept = which.min(plot_df$y), col = 'red', linetype = 'dotted') + #other metrics minimized
+    labs(x = 'degree', y = metrics[i]) -> p }
+  
+    print(p)
+}
+
+#fit model selected above: the degree 4 model that uses x, x^2, x^3, and x^5 as predictors
+summary(lm(y ~ X1 + X2^2 + X3^3 + X5^5, df))
 ```
 

@@ -1,0 +1,133 @@
+---
+title: 'STOR 565: Computational HW 2'
+author: "Brian N. White"
+date: "1/22/2022"
+output: html_document
+---
+
+```{r load relevant packages}
+library('MASS')
+library('tidyverse')
+library('tidymodels')
+```
+
+**Exercise 1**
+
+**i.**
+
+```{r}
+data(Boston)
+
+mod1 <- lm(crim ~ medv + dis + indus, data = Boston)
+summary(mod1)
+
+# Obtain the residuals
+res1 <- residuals(mod1)
+
+# Normal QQ-plot of residuals
+plot(mod1, 2)
+
+# Conduct a Normality test via Shapiro-Wilk and Kolmogorov-Smirnov test
+shapiro.test(res1)
+ks.test(res1, "pnorm")
+```
+**Exercise 2**
+
+**(a)**
+
+```{r}
+amcoll <- read.csv('data/College.csv')
+
+amcoll %>%
+  select(Accept, Enroll, Outstate, Books, Grad.Rate) %>%
+  pairs()
+```
+
+**(b)**
+
+```{r}
+mod2 <- lm(Room.Board ~ Accept + Enroll + Outstate + Books + Grad.Rate, amcoll)
+summary(mod2)
+```
+
+**(c)**
+
+```{r}
+kfold.cv.lm <- function(X, y, which.betas = rep(TRUE, ncol(X)), k = 10, seed = 7) {
+  
+  #select relevant predictors
+  X <- X[, which.betas]
+  #create data frame for use in lm
+  data <- data.frame(X, y)
+  
+  #set seed for reproducibility when shuffling observations
+  set.seed(seed)
+  #number of observations, for use when shuffling indices
+  n <- nrow(X)
+  #create vector of fold ids 
+  fold_id <- cut(sample(n), k, labels = 1:k)
+  #add fold_id to data
+  data$fold_id <- fold_id
+  
+  #create storage vector for MSE (training errors) and MSPE (testing errors)
+  MSE <- rep(0, k)
+  MSPE <- rep(0, k)
+  
+  #for each of the k folds, train data and compute MSE on training and test data
+  for(fold in 1:k){
+    #create training data for split k
+    data %>% 
+      filter(fold_id != fold) %>%
+      select(-fold_id) -> data_in
+    #create testing data for split k
+    data %>%
+      filter(fold_id == fold) %>%
+      select(-fold_id) -> data_out
+    
+    #fit the model on the training data
+    model <- lm(y~., data_in) 
+      #train set prediction
+      data_in$predict <- predict(model)
+      #test set predictions
+      data_out$predict <- predict(model, newdata = data_out)
+      #sample training risk
+      data_in %>% 
+        summarize(mse = mean((y - predict)^2)) -> MSE[fold]
+      #sample test risk
+      data_out %>% 
+        summarize(mspe = mean((y - predict)^2)) -> MSPE[fold]
+  }
+  
+  #coerce list to numeric vector so that mean can be computed
+   MSE <- as.numeric(MSE)
+  MSPE <- as.numeric(MSPE)
+  
+  #compute the avarage mse and mspe over the k folds
+  return(c(AVG.mse = mean(MSE), AVG.mspe = mean(MSPE)))
+}
+```
+
+
+**(d)**
+
+```{r}
+#create X
+amcoll %>%
+  select(Accept, Enroll, Outstate, Books, Grad.Rate) %>%
+  as.matrix -> X
+
+#create y
+amcoll %>%
+  select(Room.Board) %>%
+  rename(y = Room.Board) -> y
+
+#full model column indices
+full_index <- rep(TRUE, ncol(X))
+
+#reduced model column indices
+reduced_index <- summary(mod2)$coefficients[-1, 'Pr(>|t|)'] <0.01
+
+#compute AVG mse and AVG mspe using kfold.cv.lm
+kfold.cv.lm(X, y, full_index, k = 10, seed = 1305)
+kfold.cv.lm(X, y, reduced_index, k = 10, seed = 1305)
+```
