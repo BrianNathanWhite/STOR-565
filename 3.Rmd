@@ -8,12 +8,14 @@ output: html_document
 ```{r}
 library(leaps)
 library(tidyverse)
+library(tidymodels)
 library(ggplot2)
+library(glmnet)
 ```
 
 ### Model Selection
 
-**1.1**
+**1.1 (a)**
 
 ```{r}
 set.seed(1305) # for reproducibility
@@ -22,7 +24,7 @@ x <- rnorm(n) # simulate predictor
 eps <- rnorm(n) # simulate gaussian noise
 ``` 
 
-**1.2**
+**1.1 (b)**
 
 ```{r}
 # set true parameter values
@@ -35,39 +37,129 @@ beta3 <- 0.3
 y <- beta0 + beta1*x + beta2*x^2 + beta3*x^3 + eps # generate y values
 ```
 
+**1.1 (c)**
+
 ```{r}
 degree <- 10 # degree of polynomial
 design <- poly(x, degree = degree, raw = T, simple = T) # design matrix
 df <- data.frame(design, y) # data frame for use in regsubsets
 
-model_regsubsets <- regsubsets(y ~ ., data = df, method = 'exhaustive', nvmax = 10)
-model_summary <- summary(model_regsubsets)
+# create function to generate model selection plots according to different search methods
+poly_model_plot <- function(method){
+ 
+# perform model selection using spcecified method and output results
+model_regsubsets <- regsubsets(y ~ ., data = df, method = method, nvmax = 10)
+model_summary <- summary(model_regsubsets) 
 
-
+# specify performance metrics under consideration
 metrics <- c('adjr2', 'bic', 'cp')
 
 # use a loop to plot results for each metric
 for(i in 1:length(metrics)) {
   plot_df <- data.frame(x = 1:10, y = model_summary[[metrics[i]]])
   
-  #adjr2 case
+  # adjr2 case
   if(i == 1) {
   plot_df %>%
     ggplot(aes(x = x, y = y)) +
     geom_line(col = 'sky blue') +
-    geom_vline(xintercept = which.max(plot_df$y), col = 'red', linetype = 'dotted') + #adjr2 is maximized
+    geom_vline(xintercept = which.max(plot_df$y), col = 'red', linetype = 'dotted') + # adjr2 is maximized
     labs(x = 'degree', y = metrics[i]) -> p
   } else { 
     plot_df %>%
     ggplot(aes(x = x, y = y)) +
     geom_line(col = 'sky blue') +
-    geom_vline(xintercept = which.min(plot_df$y), col = 'red', linetype = 'dotted') + #other metrics minimized
+    geom_vline(xintercept = which.min(plot_df$y), col = 'red', linetype = 'dotted') + # other metrics minimized
     labs(x = 'degree', y = metrics[i]) -> p }
   
     print(p)
 }
 
-#fit model selected above: the degree 4 model that uses x, x^2, x^3, and x^5 as predictors
+} # end function
+
+poly_model_plot('exhaustive')
+
+#f it model selected above: the degree 4 model that uses x, x^2, x^3, and x^5 as predictors
 summary(lm(y ~ X1 + X2^2 + X3^3 + X5^5, df))
+```
+
+**1.1 (d)**
+
+```{r}
+# plots performance metric vs. # of predictors
+poly_model_plot('backward')
+poly_model_plot('forward')
+```
+**1.1 (e)**
+
+```{r}
+# ----------------------MODEL SPECIFICATION------------------------------------------
+
+# specify the linear LASSO
+linear_reg(mixture = 1, penalty = tune()) %>%
+  set_engine('glmnet', trace = 0) -> lasso_model
+
+# creates recipe with the necessary pre-processing steps for LASSO
+recipe(y ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9 + X10, data = df) %>%
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors()) -> lasso_recipe
+
+# combine the model and recipe into a workflow
+workflow() %>%
+  add_model(lasso_model) %>%
+  add_recipe(lasso_recipe) -> lasso_workflow
+
+
+# -----------------------HYPERPARAMETER TUNING---------------------------------------
+
+# prep for 5-fold cross-validation
+set.seed(1305)
+df %>%
+  vfold_cv(v = 5, strata = y) -> lasso_folds
+
+# create grid of penalty values to tune over
+penalty_grid <- expand_grid(penalty = seq(0, .1, by = 0.001))
+
+# tune model 
+lasso_workflow %>%
+  tune_grid(resamples = lasso_folds,
+            grid = penalty_grid) -> lasso_tuning
+
+# plot results from tuning
+lasso_tuning %>%
+  collect_metrics() %>%
+  filter(.metric == 'rmse') %>% #root mean squared error
+  arrange(mean) %>%
+  ggplot(aes(x = penalty, y = mean)) +
+  geom_line(col = 'light blue')
+
+lasso_tuning %>%
+  collect_metrics() %>%
+  filter(.metric == 'rsq') %>% #r-squared
+  arrange(mean) %>%
+  ggplot(aes(x = penalty, y = mean)) +
+  geom_line(col = 'red')
+
+lasso_tuning %>%
+  collect_metrics() %>%
+  filter(.metric == 'rmse') %>% #identify best penalty
+  arrange(mean) 
+
+# -------------------------FIT TUNED MODEL-----------------------------------
+
+# update model
+linear_reg(mixture = 1, penalty = 0.017) %>%
+  set_engine('glmnet') -> tuned_lasso_model
+
+# update workflow
+lasso_workflow %>%
+  update_model(tuned_lasso_model) -> tuned_lasso_workflow
+
+# fit tuned workflow
+tuned_lasso_workflow %>%
+  fit(df) -> tuned_lasso_fit
+
+# examine parameter estimates: estimates for X4 through X10 shrunk to 0.
+tidy(tuned_lasso_fit)
 ```
 
