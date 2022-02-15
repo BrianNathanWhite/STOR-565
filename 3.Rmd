@@ -5,12 +5,15 @@ date: "2/14/2022"
 output: html_document
 ---
 
-```{r}
+```{r, include = F}
 library(leaps)
 library(tidyverse)
 library(tidymodels)
 library(ggplot2)
+library(grid)
+library(gridExtra)
 library(glmnet)
+library(reshape2)
 ```
 
 ### Model Selection
@@ -33,8 +36,12 @@ beta1 <- 2
 beta2 <- -3
 beta3 <- 0.3
 
-
+# the truth!
 y <- beta0 + beta1*x + beta2*x^2 + beta3*x^3 + eps # generate y values
+
+data.frame(x = x, y = y) %>%
+  ggplot(aes(x, y)) +
+  geom_point(alpha = 0.5)
 ```
 
 **1.1 (c)**
@@ -45,7 +52,7 @@ design <- poly(x, degree = degree, raw = T, simple = T) # design matrix
 df <- data.frame(design, y) # data frame for use in regsubsets
 
 # create function to generate model selection plots according to different search methods
-poly_model_plot <- function(method){
+poly_model_plot <- function(method, df){
  
 # perform model selection using spcecified method and output results
 model_regsubsets <- regsubsets(y ~ ., data = df, method = method, nvmax = 10)
@@ -53,6 +60,9 @@ model_summary <- summary(model_regsubsets)
 
 # specify performance metrics under consideration
 metrics <- c('adjr2', 'bic', 'cp')
+
+# empty list to store plots for use later when plotting them in a single row
+plots <- list()
 
 # use a loop to plot results for each metric
 for(i in 1:length(metrics)) {
@@ -64,45 +74,59 @@ for(i in 1:length(metrics)) {
     ggplot(aes(x = x, y = y)) +
     geom_line(col = 'sky blue') +
     geom_vline(xintercept = which.max(plot_df$y), col = 'red', linetype = 'dotted') + # adjr2 is maximized
-    labs(x = 'degree', y = metrics[i]) -> p
+    labs(x = '# of predictors', y = metrics[i]) -> plots[[i]]
   } else { 
     plot_df %>%
     ggplot(aes(x = x, y = y)) +
     geom_line(col = 'sky blue') +
     geom_vline(xintercept = which.min(plot_df$y), col = 'red', linetype = 'dotted') + # other metrics minimized
-    labs(x = 'degree', y = metrics[i]) -> p }
+    labs(x = '# of predictors', y = metrics[i]) -> plots[[i]] }
   
-    print(p)
+   # print(p)
 }
+
+grid.arrange(plots[[1]], plots[[2]], plots[[3]], nrow =1) # puts plots on single row
+model_summary
 
 } # end function
 
-poly_model_plot('exhaustive')
+poly_model_plot('exhaustive', df = df)
 
-#f it model selected above: the degree 4 model that uses x, x^2, x^3, and x^5 as predictors
-summary(lm(y ~ X1 + X2^2 + X3^3 + X5^5, df))
+# fit model selected above: the degree 4 model that uses x, x^2, x^3, and x^5 as predictors
+bss_fit <- lm(y ~ X1 + X2^2 + X3^3 + X5^5, df) #best subset model
+summary(bss_fit)
+
+#plot best subset model against data
+bss_fit %>%
+  predict(new_data = df) -> bss_pred
+
+data.frame(x = x, y = y, .pred = bss_pred) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_line(aes(x = x, y = .pred), col = 'blue') +
+  labs(title = 'best subsets regression')
 ```
 
 **1.1 (d)**
 
 ```{r}
 # plots performance metric vs. # of predictors
-poly_model_plot('backward')
-poly_model_plot('forward')
+poly_model_plot('backward', df = df) #forward selection
+poly_model_plot('forward', df = df) #backward selection
 ```
+
 **1.1 (e)**
 
-```{r}
+```{r tidymodels implementation}
+
 # ----------------------MODEL SPECIFICATION------------------------------------------
 
 # specify the linear LASSO
-linear_reg(mixture = 1, penalty = tune()) %>%
-  set_engine('glmnet', trace = 0) -> lasso_model
+linear_reg(penalty = tune(), mixture = 1) %>%
+  set_engine('glmnet') -> lasso_model
 
 # creates recipe with the necessary pre-processing steps for LASSO
-recipe(y ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9 + X10, data = df) %>%
-  step_center(all_predictors()) %>%
-  step_scale(all_predictors()) -> lasso_recipe
+recipe(y ~ ., data = df) -> lasso_recipe
 
 # combine the model and recipe into a workflow
 workflow() %>%
@@ -113,42 +137,41 @@ workflow() %>%
 # -----------------------HYPERPARAMETER TUNING---------------------------------------
 
 # prep for 5-fold cross-validation
-set.seed(1305)
 df %>%
-  vfold_cv(v = 5, strata = y) -> lasso_folds
+  vfold_cv(v = 5) -> lasso_folds
 
 # create grid of penalty values to tune over
-penalty_grid <- expand_grid(penalty = seq(0, .1, by = 0.001))
+lasso_grid <- expand_grid(penalty = seq(0, 1, by = 0.01))
 
 # tune model 
 lasso_workflow %>%
   tune_grid(resamples = lasso_folds,
-            grid = penalty_grid) -> lasso_tuning
+            grid = lasso_grid) -> lasso_tuning
+
+# pull out the tuned lambda for use in model fitting and in plots
+lasso_tuning %>%
+  collect_metrics() %>%
+  filter(.metric == 'rmse') %>%
+  arrange(mean) %>%
+  select(penalty) %>%
+  slice(1) %>%
+  pull() -> tuned_penalty
 
 # plot results from tuning
 lasso_tuning %>%
   collect_metrics() %>%
   filter(.metric == 'rmse') %>% #root mean squared error
   arrange(mean) %>%
-  ggplot(aes(x = penalty, y = mean)) +
-  geom_line(col = 'light blue')
-
-lasso_tuning %>%
-  collect_metrics() %>%
-  filter(.metric == 'rsq') %>% #r-squared
-  arrange(mean) %>%
-  ggplot(aes(x = penalty, y = mean)) +
-  geom_line(col = 'red')
-
-lasso_tuning %>%
-  collect_metrics() %>%
-  filter(.metric == 'rmse') %>% #identify best penalty
-  arrange(mean) 
+  ggplot(aes(x = log(penalty), y = mean)) +
+  labs(y = 'rmse') +
+  geom_errorbar(aes(ymin = mean - std_err, ymax = mean + std_err), col = 'pink', width = 0.001) +
+  geom_line(col = 'light blue') +
+  geom_vline(xintercept = log(tuned_penalty), col = 'black', linetype = 'dotted') 
 
 # -------------------------FIT TUNED MODEL-----------------------------------
 
 # update model
-linear_reg(mixture = 1, penalty = 0.017) %>%
+linear_reg(penalty = tuned_penalty, mixture = 1) %>%
   set_engine('glmnet') -> tuned_lasso_model
 
 # update workflow
@@ -160,6 +183,76 @@ tuned_lasso_workflow %>%
   fit(df) -> tuned_lasso_fit
 
 # examine parameter estimates: estimates for X4 through X10 shrunk to 0.
-tidy(tuned_lasso_fit)
+tidy(tuned_lasso_fit) -> estimates
+
+tuned_lasso_fit %>% 
+  extract_fit_engine() %>% 
+  tidy(return_zeros = T) %>% 
+  rename(penalty = lambda) %>%   # for consistent naming
+  ggplot(aes(x = penalty, y = estimate, color = term)) +
+  geom_line() +
+  geom_hline(yintercept = 0, col = 'black', linetype = 'dotted') +
+  geom_vline(xintercept = tuned_penalty, col = 'black', linetype = 'dotted') 
+
+#plot tuned model against data
+tuned_lasso_fit %>%
+  predict(new_data = df) -> tuned_lasso_pred
+
+data.frame(x = x, y = y) %>%
+  bind_cols(tuned_lasso_pred) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point(alpha = 0.5) +
+  geom_line(aes(x = x, y = .pred), col = 'blue') +
+  labs(title = 'LASSO regression') 
+
+```
+
+```{r}
+#compare LASSO with BSS reg
+data.frame(bss = bss_pred, lasso = tuned_lasso_pred) %>%
+  rename(lasso = .pred) %>%
+  melt() %>% #reformat data so ggplot can use color aesthetic
+  bind_cols(x = rep(x, 2), y = rep(y, 2)) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point(alpha = 0.2) +
+  geom_line(aes(x = x, y = value, color = variable)) +
+  labs(title = 'LASSO vs Best Subsets Regreesion')
+```
+
+```{r glmnet implementation}
+model.cv.glmnet <- cv.glmnet(design, y, nfold = 5, alpha = 1)
+plot(model.cv.glmnet)
+
+model.cv.glmnet$lambda.min #tuned lambda
+betas <- coef(model.cv.glmnet, s = "lambda.min") %>% as.numeric()
+betas #parameter estimates
+```
+**1.2**
+
+```{r}
+beta7 <- 7
+y <- beta0 + beta7*x^7 + eps
+df <- data.frame(design, y)
+
+data.frame(x = x, y = y) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point(alpha = 0.5)
+```
+```{r}
+poly_model_plot(method = 'exhaustive', df = df)
+```
+```{r}
+#repeat LASSO using glmnet
+model.cv.glmnet <- cv.glmnet(design, y, nfold = 5, alpha = 1)
+plot(model.cv.glmnet)
+
+model.cv.glmnet$lambda.min #tuned lambda
+betas <- coef(model.cv.glmnet, s = "lambda.min") %>% as.numeric()
+betas #parameter estimates
+```
+**Prediction**
+
+```{r}
+nba <- read.csv('data/nba-teams-2017.csv')
 ```
 
