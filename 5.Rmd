@@ -1,0 +1,212 @@
+---
+title: 'STOR 565: IA Solution For Homework 6'
+author: "Brian N. White"
+date: "2/23/2022"
+output: html_document
+---
+```{r}
+# set global code-chunk options
+knitr::opts_chunk$set(fig.align = 'center')
+```
+
+```{r, include = F}
+library(tidyverse)
+library(reshape2)
+library(png)
+library(grid)
+```
+
+```{r}
+# import data
+nba <- read.csv('./data/nba-teams-2017.csv')
+```
+
+**1 (a)**
+
+Create box plots of the quantitative features (i.e. all but) teams to see if you should scale the data when performing PCA. Describe your findings in words.
+
+The variance of the features other than 'wins' and 'points' are comparable but differ greatly from the variance of 'wins' and 'points'. The data should be scaled.
+```{r, warning = F, message = F}
+nba <- nba %>%
+  select(team, wins, points, points3, free_throws, off_rebounds, def_rebounds, assists, steals, personal_fouls)
+
+# box plots for un-scaled features
+nba %>%
+  select(-team) %>%
+  melt() %>%
+  ggplot(aes(y = value, color = variable)) +
+  geom_boxplot(outlier.size = 0.8)
+
+# box plots for scaled features
+nba %>%
+  select(-team) %>%
+  scale(center = T) %>% 
+  as.tibble() %>%
+  melt() %>%
+  ggplot(aes(y = value, color = variable)) +
+  geom_boxplot(outlier.size = 0.8)
+
+# check that data are, in fact, centered and scaled
+nba %>%
+  select(-team) %>%
+  scale() %>%
+  as.tibble() %>%
+  summarise_all(.funs = list(sd = sd, mean = mean))
+```
+**1 (b)**
+
+Obtain PC loadings of the first four princple components (PCs). Only display the first few elements of each loading in your report.
+
+```{r}
+# compute the principle components
+nba_pc <- nba %>%
+  select(-team) %>%
+  scale(center = T) %>%
+  prcomp()
+
+# loadings
+nba_pc$rotation
+# general summary
+summary(nba_pc)
+```
+
+**1 (c)**
+
+Generate a scree plot describing the amount explained by the various PCs.
+
+```{r}
+# contains the variance of proportion explained for each principle component
+prop_var <- summary(nba_pc)$importance[2,]
+
+# create the scree plot
+data.frame(x = 1:9, y = prop_var) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point() +
+  geom_line(col = 'light blue') +
+  scale_x_continuous(breaks = 1:length(prop_var)) +
+  labs(x = 'Principle component', y = 'Proportion of variance', title = 'Scree Plot')
+```
+
+**1 (d)**
+
+Make another plot showing the cumulative percent of the variance explained.
+
+```{r}
+# contains the cumulative variance explained with each additional pc added
+cum_var <- summary(nba_pc)$importance[3,]
+
+# create the scree plot
+data.frame(x = 1:length(cum_var), y = cum_var) %>%
+  ggplot() +
+  geom_point(aes(x = x, y = y)) +
+  geom_text(aes(x =x , y = y, label =scales::percent(cum_var)), nudge_x = 0.25, nudge_y = 0.04) +
+  geom_line(aes(x = x, y = y), col = 'light blue') +
+  scale_x_continuous(breaks = 1:length(cum_var)) +
+  labs(x = 'No. of principle components', y = 'Cumulative variance', title = 'Cumulative Variance Explained Plot')
+```
+
+**1 (e)**
+
+If you were to retain all PCs which explain at least 90% of the variance, how many PCs would you retain?
+
+One should retain the first six principle components to capture at least 90% of the variance while maximizing the decrease in dimension. 
+
+```{r}
+# confirm results 
+which(summary(nba_pc)$importance[3,] >= 0.9)
+# cumulative proportion of variance explained by the 6th pc
+summary(nba_pc)$importance[3, 6]
+```
+
+
+**1 (d)**
+
+Plot PC1 vs PC2 with the team names and try to interpret your findings.
+
+```{r}
+# create data frame of pc scores
+df <- data.frame(team = nba$team, nba_pc$x) 
+# assign row names to df for use in plot
+rownames(df) <- df$team
+
+# create plot of pc1 vs pc2
+df %>%
+  ggplot(aes(x = PC1, y = PC2, label = rownames(df)))  +
+  geom_text(check_overlap = T, size = 3) +
+  xlim(-6, 3)
+```
+
+**2 (a)**
+
+```{r}
+# import redfin png
+redfin <- readPNG('./data/Redfin_house.png')[, , 1]
+
+# dimensions of data frame
+dim(redfin)
+
+# plot image
+grid.raster(redfin)
+
+# examine histogram of pixel intensities
+data.frame(x = as.vector(redfin)) %>%
+  ggplot(aes(x = x)) + 
+  geom_histogram() +
+  labs(title = 'Histogram of pixel intensities')
+```
+
+**2 (b)**
+
+```{r}
+redfin_pc <- redfin %>% 
+                  prcomp(center = F, scale = F)
+
+redfin_prop_var <- summary(redfin_pc)$importance[2,]
+redfin_cum_var <- summary(redfin_pc)$importance[3,]
+
+data.frame(x = 1:length(redfin_prop_var), y = redfin_prop_var) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point() +
+  geom_line(col = 'light blue') +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(breaks = seq(0, length(redfin_prop_var), by = 100)) +
+  labs(x = 'Principle component', y = 'Proportion of variance', title = 'Scree Plot')
+
+# cumulative variance plot
+data.frame(x = 1:length(redfin_prop_var), y = redfin_cum_var) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_point() +
+  geom_line(col = 'light blue') +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(breaks = seq(0, length(redfin_cum_var), by = 100)) +
+  labs(x = 'No. of principle components', y = 'Cumulative variance', title = 'Cumulative Variance Explained Plot')
+
+# check minimum no. of principle components needed to explain 90% of the variation
+which(summary(redfin_pc)$importance[3,] > 0.9)[1]
+```
+
+**2 (c)**
+
+```{r, cache = T}
+# compute SVD of redfin
+redfin_svd <- svd(redfin)
+
+# compute compressed redfin for different numbers of included principle components
+for(k in c(1, 5, 10, 15, 20, 30, 50, 100, 200)){
+  
+  if(k == 1) {
+    
+    redfin_proj <- redfin_svd$d[1]*as.matrix(redfin_svd$u[, 1:k]) %*% as.matrix(t(redfin_svd$v[, 1:k]))
+    
+  } else {
+  
+redfin_proj <- as.matrix(redfin_svd$u[, 1:k]) %*% as.matrix(diag(redfin_svd$d[1:k])) %*% as.matrix(t(redfin_svd$v[, 1:k]))
+
+}
+
+grid.newpage(recording = F)
+grid.raster(pmax(pmin(redfin_proj, 1), 0))
+
+}
+```
+
