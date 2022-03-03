@@ -2,7 +2,9 @@
 title: 'STOR 565: IA Solution For Homework 6'
 author: "Brian N. White"
 date: "2/23/2022"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 ```{r}
 # set global code-chunk options
@@ -52,6 +54,9 @@ nba %>%
   scale() %>%
   as.tibble() %>%
   summarise_all(.funs = list(sd = sd, mean = mean))
+
+# using base R
+boxplot(scale(nba[,-1], center = T))
 ```
 **1 (b)**
 
@@ -68,6 +73,32 @@ nba_pc <- nba %>%
 nba_pc$rotation
 # general summary
 summary(nba_pc)
+```
+```{r}
+# direct computation
+nba_svd <- nba %>%
+  select(-team) %>%
+  scale() %>%
+  svd()
+
+# standard deviations of principle components 
+nba_pc$x %>%
+  as.tibble() %>%
+  summarise_all(sd)
+
+nba_pc$sdev
+
+# compare the principle components
+as.matrix(scale(nba[, -1]), center = T )%*% nba_svd$v[,2]
+nba_pc$x[,2]
+
+# compare proportion of variance explained
+nba_svd$d^2/sum(nba_svd$d^2)
+summary(nba_pc)$importance[2,]
+
+# compare loadings
+nba_svd$v
+nba_pc$rotation
 ```
 
 **1 (c)**

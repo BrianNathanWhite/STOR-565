@@ -1,0 +1,48 @@
+---
+title: "linear vs cubic training RSS example"
+author: "Brian N. White"
+date: "2/17/2022"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+set.seed(1234)
+# generate data (the truth) y = x + noise where noise is N(0, noise)
+x <- seq(0, 10, by = 0.1)
+eps <- rnorm(length(x))
+# eps <- rnorm(length(x), 0, noise)
+y <- x + eps
+
+# put x and y in data frame
+df <- data.frame(x = x, y = y)
+
+# fit linear and cubic models
+model1 <- lm(y ~ x,df)
+model2 <- lm(y ~ poly(x, 3, raw =T), df)
+
+# plot models
+p <- df %>%
+    ggplot(aes(x = x, y = y)) +
+    geom_point(size = 0.5, alpha = .5) +
+    geom_smooth(method = 'lm', formula = y ~ x, linetype = 'dotted', color = 'red', se = F) +
+    geom_smooth(method = 'lm', formula = y ~ poly(x, 3, raw = TRUE), linetype = 'dotted', color = 'blue', se = F)
+
+# compute training RSS for each model
+linear_RSS <- sum((y - model1$fitted.values)^2)
+cubic_RSS <- sum((y - model2$fitted.values)^2)
+
+# creates 'news' object: tell us whether the cubic RSS is less than the linear RSS or equal to it
+if(cubic_RSS < linear_RSS) {
+  news <- print('cubic RSS < linear RSS')
+} else {
+  news <- print('cubic RSS = linear RSS')
+}
+
+print(p)
+print(paste('cubic RSS is', cubic_RSS, 'and linear RSS is', linear_RSS, sep = ' '))
+print(news)
+```
