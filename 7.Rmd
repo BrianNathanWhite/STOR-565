@@ -1,0 +1,745 @@
+---
+title: 'STOR 565: Homework 7'
+author: "Brian N. White"
+date: "3/8/2022"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(reshape2)
+library(tidymodels)
+library(kknn)
+library(MASS)
+library(discrim)
+library(caret)
+
+# not using tidymodels
+library(class)
+library(glmnet)
+library(ggplot2)
+library(mvtnorm)
+library(e1071)
+```
+
+### Problem 1
+
+```{r}
+# upload and prepare data
+online_train <- read.csv('data/OnlineNewsPopularityTraining.csv')
+online_test <-  read.csv('data/OnlineNewsPopularityTest.csv')
+
+online_train <- online_train %>%
+  dplyr::select(-shares, 
+                -url, 
+                -timedelta, 
+                -LDA_00, 
+                -rate_negative_words, 
+                -abs_title_subjectivity, 
+                -abs_title_sentiment_polarity, 
+                -weekday_is_sunday,
+                -is_weekend)
+
+online_train <- online_train %>%
+  slice(-24800)
+
+online_test <- online_test %>%
+  dplyr::select(-shares, 
+                -url, 
+                -timedelta, 
+                -LDA_00, 
+                -rate_negative_words, 
+                -abs_title_subjectivity, 
+                -abs_title_sentiment_polarity, 
+                -weekday_is_sunday,
+                -is_weekend)
+
+var_number <- c( "n_tokens_title", 
+                 "n_tokens_content", 
+                 "average_token_length",
+                 'num_hrefs',
+                 'num_self_hrefs',
+                  paste0('self_reference_', c('min', 'max'), '_shares'),
+                 'self_reference_avg_sharess',
+                 'num_imgs',
+                 'num_videos',
+                 'num_keywords',
+                  paste0('kw_', outer(c('min', 'max', 'avg'), c('min', 'max', 'avg'), paste, sep = "_"))
+                 )
+
+var_ratio <- var_ratio <- c("n_unique_tokens",
+                            "n_non_stop_words",
+                            "n_non_stop_unique_tokens",
+                            paste0( "LDA_0", 1:4),
+                            "title_subjectivity",
+                            "global_subjectivity",
+                            "title_sentiment_polarity",
+                            "global_sentiment_polarity",
+                            paste0("global_rate_",
+                            c("positive", "negative"), "_words"),
+                            "rate_positive_words",
+                            paste0(outer(c("avg", "min", "max"), c("positive", "negative"), paste, sep = "_"), "_polarity")
+                            )
+
+var_bool <- c(paste0("weekday_is_", c("monday", "tuesday" ,"wednesday" ,"thursday" ,"friday" , "saturday" )), 
+              paste0("data_channel_is_" , c("lifestyle", "entertainment", "bus", "socmed", "tech","world"))
+)
+
+
+# check range of variables for negative numbers as upcoming transformation has non-negative domain
+range(online_train$kw_min_min) # negative 
+range(online_train$kw_min_max)
+range(online_train$kw_min_avg) # negative
+range(online_train$kw_max_max)
+range(online_train$kw_max_avg)
+range(online_train$kw_max_min)
+range(online_train$kw_avg_avg)
+range(online_train$kw_avg_max)
+range(online_train$kw_avg_min) # negative
+
+# -----------------------------------------
+
+kw_min_min_replace_train <- online_train %>%
+  dplyr::filter(kw_min_min == -1) %>%
+  mutate(kw_min_min = 0)
+
+online_train <- online_train %>%
+  dplyr::filter(kw_min_min != -1) %>%
+  bind_rows(kw_min_min_replace_train)
+
+kw_min_min_replace_test <- online_train %>%
+  dplyr::filter(kw_min_min == -1) %>%
+  mutate(kw_min_min = 0)
+
+online_test <- online_test %>%
+  dplyr::filter(kw_min_min != -1) %>%
+  bind_rows(kw_min_min_replace_test)
+
+# -----------------------------------------------------
+
+
+kw_min_avg_replace_train <- online_train %>%
+  dplyr::filter(kw_min_avg == -1) %>%
+  mutate(kw_min_avg = 0)
+
+online_train <- online_train %>%
+  dplyr::filter(kw_min_avg != -1) %>%
+  bind_rows(kw_min_avg_replace_train)
+
+kw_min_avg_replace_test <- online_test %>%
+  dplyr::filter(kw_min_avg == -1) %>%
+  mutate(kw_min_avg = 0)
+
+online_train <- online_test %>%
+  dplyr::filter(kw_min_avg != -1) %>%
+  bind_rows(kw_min_avg_replace_test)
+
+# --------------------------------------------------------
+
+
+kw_avg_min_replace_train <- online_train %>%
+  dplyr::filter(kw_avg_min == -1) %>%
+  mutate(kw_avg_min = 0)
+
+online_train <- online_train %>%
+  dplyr::filter(kw_avg_min != -1) %>%
+  bind_rows(kw_avg_min_replace_train)
+
+kw_avg_min_replace_test <- online_test %>%
+  dplyr::filter(kw_avg_min == -1) %>%
+  mutate(kw_avg_min = 0)
+
+online_test <- online_test %>%
+  dplyr::filter(kw_avg_min != -1) %>%
+  bind_rows(kw_avg_min_replace_test)
+
+#------------------------------------
+
+# corrected
+range(online_train$kw_min_min)
+range(online_train$kw_min_max)
+range(online_train$kw_min_avg)
+range(online_train$kw_max_max)
+range(online_train$kw_max_avg)
+range(online_train$kw_max_min)
+range(online_train$kw_avg_avg)
+range(online_train$kw_avg_max)
+range(online_train$kw_avg_min)
+
+# ------------------------------------
+
+log_plus <- function(x) log(x + 1)
+
+var_number_plus_train <- online_train %>%
+  dplyr::select(var_number) %>%
+  mutate_all(log_plus)
+
+online_train <- online_train %>%
+    dplyr::select(-var_number) %>%
+    bind_cols(var_number_plus_train)
+
+var_number_plus_test <- online_test %>%
+  dplyr::select(var_number) %>%
+  mutate_all(log_plus)
+
+online_test <- online_test %>%
+    dplyr::select(-var_number) %>%
+    bind_cols(var_number_plus_test)
+  
+# ---------------------------------------
+
+# no infinite values
+range(online_train$kw_min_min)
+range(online_train$kw_min_max)
+range(online_train$kw_min_avg)
+range(online_train$kw_max_max)
+range(online_train$kw_max_avg)
+range(online_train$kw_max_min)
+range(online_train$kw_avg_avg)
+range(online_train$kw_avg_max)
+range(online_train$kw_avg_min)
+```
+
+**1.1 Training**
+
+```{r}
+str(online_train)
+```
+
+*1.1.1 LDA*
+
+```{r}
+lda_online <- discrim_linear() %>%
+              set_engine('MASS') %>%
+              set_mode('classification')
+
+lda_train <- online_train %>%
+                dplyr::select(popular, var_number, var_ratio) %>%
+                mutate(popular = as.factor(popular))
+
+lda_recipe <- recipe(popular ~ ., data = lda_train)
+
+lda_workflow <- workflow() %>%
+                add_model(lda_online) %>%
+                add_recipe(lda_recipe)
+
+lda_fit <- lda_workflow %>%
+           fit(lda_train)
+```
+
+*1.1.2 QDA*
+
+```{r}
+qda_online <- discrim_quad() %>%
+              set_engine('MASS') %>%
+              set_mode('classification')
+
+qda_train <- online_train %>%
+                dplyr::select(popular, var_number, var_ratio) %>%
+                mutate(popular = as.factor(popular))
+
+qda_recipe <- recipe(popular ~ ., data = qda_train)
+
+qda_workflow <- workflow() %>%
+                add_model(qda_online) %>%
+                add_recipe(qda_recipe)
+
+qda_fit <- qda_workflow %>%
+           fit(qda_train)
+```
+
+*1.1.3 KNN*
+
+```{r cache = T}
+knn_online <- nearest_neighbor(neighbors = tune()) %>%
+              set_engine('kknn') %>%
+              set_mode('classification')
+
+knn_train <- online_train %>%
+                dplyr::select(popular, var_number, var_ratio, var_bool) %>%
+                mutate(popular = as.factor(popular))
+
+knn_recipe <- recipe(popular ~ ., data = knn_train)
+
+knn_folds <- knn_train %>% vfold_cv(v = 5)
+
+knn_cv_result <- function(folds, recipe, model, grid) {
+  
+  knn_recipe <- recipe
+
+  knn_workflow <- workflow() %>%
+    add_model(model) %>%
+    add_recipe(recipe) 
+
+  knn_grid <- expand_grid(neighbors = grid)
+
+  knn_tuning <- knn_workflow %>%
+  tune_grid(resamples = folds,
+            grid = knn_grid)
+
+  k <- knn_tuning %>%
+    collect_metrics() %>%
+    filter(.metric == 'accuracy') %>%
+    arrange(desc(mean)) %>%
+    slice(1) %>%
+    dplyr::select(neighbors) %>%
+    pull()
+
+  p <- knn_tuning %>%
+    collect_metrics() %>%
+    filter(.metric == 'accuracy') %>%
+    arrange(desc(mean)) %>%
+    ggplot(aes(x = neighbors, y = 1- mean)) +
+    geom_point(col = 'blue') +
+    geom_vline(xintercept = k, linetype = 'dotted') +
+    labs(y = 'misclassification rate')
+
+  results <- list(p, k)
+  return(results)
+
+}
+
+knn_cv_result0 <- knn_cv_result(knn_folds, knn_recipe, knn_online, seq(from = 1, to = 500, by = 50))
+
+knn_cv_result0[[1]]
+
+knn_tuned <- nearest_neighbor(neighbors = knn_cv_result0[[2]]) %>%
+              set_engine('kknn') %>%
+              set_mode('classification')
+
+
+knn_workflow <- workflow() %>%
+                add_model(knn_tuned) %>%
+                add_recipe(knn_recipe)
+
+knn_fit <- knn_workflow %>%
+           fit(knn_train)
+```
+
+*1.1.4. Logistic Regression*
+
+```{r}
+logistic_online <- logistic_reg() %>%
+              set_engine('glm') %>%
+              set_mode('classification')
+
+logistic_train <-  online_train %>%
+                dplyr::select(popular, var_number, var_ratio, var_bool) %>%
+                mutate(popular = as.factor(popular))
+
+logistic_recipe <- recipe(popular ~ ., data = logistic_train)
+
+logistic_workflow <- workflow() %>%
+                add_model(logistic_online) %>%
+                add_recipe(logistic_recipe)
+
+logistic_fit <- logistic_workflow %>%
+           fit(logistic_train)
+```
+
+**1.2 Prediction & Discussion**
+
+```{r}
+# returns confusion matrix and classifier metrics
+classifier_results <- function(truth, pred) {
+  
+confusion <- table(prediction = pred, truth = truth)
+misclass <- (confusion[2,1] + confusion[1, 2])/sum(confusion)
+sensit <- (confusion[2, 2]/sum(confusion[, 2]))
+specif <- (confusion[1, 1]/sum(confusion[, 1]))
+
+a <- c(misclass, sensit, specif)
+
+names(confusion) <- c('confusion matrix')
+names(a) <- c('misclassification rate', 'sensitivity', 'specificity')
+
+results <- list(confusion, a)
+names(results) <- c('confusion matrix', 'performance metrics')
+
+
+return(results)
+
+}
+
+# lda
+lda_pred <- lda_fit %>%
+            predict(new_data = online_test)
+
+a <- classifier_results(online_test$popular, lda_pred$.pred_class)[[2]]
+
+
+# qda
+qda_pred <- qda_fit %>%
+            predict(new_data = online_test)
+
+b <- classifier_results(online_test$popular, qda_pred$.pred_class)[[2]]
+
+# knn
+knn_pred <- knn_fit %>%
+            predict(new_data = online_test)
+
+c <- classifier_results(online_test$popular, knn_pred$.pred_class)[[2]]
+
+# logistic regression
+logistic_pred <- logistic_fit %>%
+            predict(new_data = online_test)
+
+d <- classifier_results(online_test$popular, logistic_pred$.pred_class)[[2]]
+
+
+# returns classification metrics for each classifier 
+part1_results <- rbind(a, b, c, d)
+rownames(part1_results) <- c('lda', 'qda', 'knn', 'logistic regression')
+
+part1_results
+
+# returns auc for each classifier
+get_auc <- function(model_fit) {
+  
+model_prob <- model_fit %>% 
+  predict(new_data = online_test, type = 'prob') %>%
+  dplyr::select(.pred_1)
+
+model_prob_df <- data.frame(truth = as.factor(online_test$popular), estimate = model_prob)
+colnames(model_prob_df) <- c('truth', 'estimate')
+
+result <- roc_auc(model_prob_df, truth, estimate)[3]
+
+return(result)
+
+}
+
+part1_auc <- as.data.frame(rbind(get_auc(lda_fit), get_auc(qda_fit), get_auc(knn_fit), get_auc(logistic_fit)))
+part1_auc <- cbind(data.frame(c('lda', 'qda', 'knn', 'logistic regression')), part1_auc)
+colnames(part1_auc) <- c('classifier', 'auc')
+
+part1_auc %>%
+  arrange(desc(auc))
+```
+
+### Problem 2
+
+**2.1 Data Generation**
+
+```{r data simulation}
+# create function to generate data for each scenario
+scenario <- function(sigma0, sigma1) {
+  
+class0 <- data.frame(rmvnorm(50, mean = rep(0, 2), sigma = sigma0), 
+                            class = as.factor(rep(0, 50)))
+class1 <- data.frame(rmvnorm(50, mean = rep(1, 2), sigma = sigma1), 
+                            class = as.factor(rep(1, 50)))
+
+df <- rbind(class0, class1)
+
+return(df)
+}
+
+# scenario 1
+df1 <- scenario(diag(2), diag(2))
+# scenario 2
+df2 <- scenario(matrix(c(1, -.5, -.5, 1), ncol = 2, nrow = 2, byrow = T), diag(2))
+
+# check data generation
+data_check <- function(df) {
+  
+  a <- df %>%
+    group_by(class) %>%
+    summarise_all(mean)
+
+  b <- df %>%
+    filter(class == '0') %>%
+    dplyr::select(-class) %>%
+    cov()
+
+  c <- df %>%
+    filter(class == '1') %>%
+    dplyr::select(-class) %>%
+    cov()
+  
+  results <- list(a, b, c)
+  
+  return(results)
+
+}
+
+data_check(df1)
+data_check(df2)
+
+# EDA
+scenario_eda <- function(df) {
+  
+  p1 <- df %>%
+    ggplot(aes(X1, X2, col = class)) +
+    geom_point()
+
+  p2 <- df %>%
+    melt(id.vars = c('class')) %>%
+    ggplot() +
+    geom_density(aes(x = value, col = class)) +
+    facet_wrap(~variable)
+
+  results <- list(p1, p2)
+
+  return(results)
+
+}
+
+scenario_eda(df1)
+scenario_eda(df2)
+```
+
+```{r tuning knn}
+# create folds for k fold cross validation
+knn_folds1 <- df1 %>% vfold_cv(v = 5)
+knn_folds2 <- df2 %>% vfold_cv(v = 5)
+
+# specify model & recipe; tune for k
+knn_model <- nearest_neighbor(neighbors = tune()) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+
+knn_recipe1 <- recipe(class ~ X1 + X2, data = df1)
+knn_recipe2 <- recipe(class ~ X1 + X2, data = df2)
+
+knn_cv_result1 <-  knn_cv_result(knn_folds1, knn_recipe1, knn_model, 1:50)
+knn_cv_result2 <-  knn_cv_result(knn_folds2, knn_recipe2, knn_model, 1:50)
+
+knn_cv_result1
+knn_cv_result2
+```
+
+
+**2.2 Training and Testing**
+
+**(a)**
+
+```{r}
+# generate training data
+set.seed(456)
+# new scenario 1
+train_df1 <- scenario(diag(2), diag(2))
+# new scenario 2
+train_df2 <- scenario(matrix(c(1, -.5, -.5, 1), ncol = 2, nrow = 2, byrow = T), diag(2))
+
+data_check(train_df1)
+data_check(train_df2)
+scenario_eda(train_df1)
+scenario_eda(train_df2)
+```
+
+```{r}
+# specify recipes for use in all models
+model_recipe1 <- recipe(class ~ X1 + X2, data = train_df1)
+model_recipe2 <- recipe(class ~ X1 + X2, data = train_df2)
+
+# logistic classification
+logistic_model <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+logistic_workflow <- workflow() %>%
+                      add_model(logistic_model) %>%
+                      add_recipe(model_recipe1)
+
+# knn classification
+knn_model1 <- nearest_neighbor(neighbors = knn_cv_result1[[2]]) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+
+knn_model2 <- nearest_neighbor(neighbors = knn_cv_result2[[2]]) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+
+knn_model3 <- nearest_neighbor(neighbors = 1) %>% 
+  set_engine("kknn") %>% 
+  set_mode("classification")
+
+knn_workflow1 <- workflow() %>%
+                      add_model(knn_model1) %>%
+                      add_recipe(model_recipe1)
+
+knn_workflow2 <- workflow() %>%
+                      add_model(knn_model2) %>%
+                      add_recipe(model_recipe2)
+
+knn_workflow3a <- workflow() %>%
+                      add_model(knn_model3) %>%
+                      add_recipe(model_recipe1)
+
+knn_workflow3b <- workflow() %>%
+                      add_model(knn_model3) %>%
+                      add_recipe(model_recipe2)
+
+# lda classification 
+lda_model <- discrim_linear() %>% 
+  set_engine("MASS") %>% 
+  set_mode("classification")
+
+lda_workflow1 <- workflow() %>%
+                 add_model(lda_model) %>%
+                 add_recipe(model_recipe1)
+
+lda_workflow2 <- workflow() %>%
+                 add_model(lda_model) %>%
+                 add_recipe(model_recipe2)
+
+
+# qda classification
+qda_model <- discrim_quad() %>% 
+  set_engine("MASS") %>% 
+  set_mode("classification")
+
+qda_workflow1 <- workflow() %>%
+                 add_model(qda_model) %>%
+                 add_recipe(model_recipe1)
+
+qda_workflow2 <- workflow() %>%
+                 add_model(qda_model) %>%
+                 add_recipe(model_recipe2)
+
+
+# train logistic classifier
+logistic_fit1 <- logistic_workflow %>%
+                 fit(train_df1)
+
+
+logistic_fit2 <- logistic_workflow %>%
+                 fit(train_df2)
+
+# train knn classifier
+knn_fit1 <- knn_workflow1 %>%
+                 fit(train_df1)
+
+
+knn_fit2 <- knn_workflow2 %>%
+                 fit(train_df2)
+
+knn_fit3a <- knn_workflow3a %>%
+                 fit(train_df1)
+
+knn_fit3b <- knn_workflow3b %>%
+                 fit(train_df2)
+
+# train lda classifier
+lda_fit1 <- lda_workflow1 %>%
+            fit(df1)
+
+lda_fit2 <- lda_workflow2 %>%
+            fit(df2)
+
+# train qda classifier
+qda_fit1 <- qda_workflow1 %>%
+            fit(df1)
+
+qda_fit2 <- qda_workflow2 %>%
+            fit(df2)
+
+# for each scenario returns the mis-classification rate of each classifier 
+overall_results <- function(test_df1, test_df2) {
+
+# generate logistic predictions
+
+logistic_pred1 <- logistic_fit1 %>%
+                 predict(new_data = test_df1)
+
+logistic_pred2 <- logistic_fit2 %>%
+                 predict(new_data = test_df2)
+
+# generate knn predictions
+knn_pred1 <- knn_fit1 %>%
+                 predict(new_data = test_df1)
+
+knn_pred2 <- knn_fit2 %>%
+                 predict(new_data = test_df2)
+
+knn_pred3a <- knn_fit3a %>%
+                 predict(new_data = test_df1)
+
+knn_pred3b <- knn_fit3b %>%
+                 predict(new_data = test_df2)
+
+# generate predictions
+lda_pred1 <- lda_fit1 %>%
+                 predict(new_data = test_df1)
+
+lda_pred2 <- lda_fit2 %>%
+                 predict(new_data = test_df2)
+
+# generate predictions
+qda_pred1 <- qda_fit1 %>%
+                 predict(new_data = test_df1)
+
+qda_pred2 <- qda_fit2 %>%
+                 predict(new_data = test_df2)
+
+# scenario 1 misclassification rate
+
+a1 <- classifier_results(test_df1$class, logistic_pred1$.pred_class)[[2]][1] # logistic
+b1 <- classifier_results(test_df1$class, knn_pred3a$.pred_class)[[2]][1] # knn k = 1
+c1 <- classifier_results(test_df1$class, knn_pred1$.pred_class)[[2]][1] # knn cv k
+d1 <- classifier_results(test_df1$class, lda_pred1$.pred_class)[[2]][1] # lda
+e1 <- classifier_results(test_df1$class, qda_pred1$.pred_class)[[2]][1] # qda
+
+results1 <- c(d1, e1, b1, c1, a1)
+names(results1) <- c('lda', 'qda', 'knn_1', 'knn_cv', 'logistic')
+
+# scenario 2 misclassification rate
+a2 <- classifier_results(test_df2$class, logistic_pred2$.pred_class)[[2]][1] # logistic
+b2 <- classifier_results(test_df2$class, knn_pred3b$.pred_class)[[2]][1] # knn k = 1
+c2 <- classifier_results(test_df2$class, knn_pred2$.pred_class)[[2]][1] # knn cv k
+d2 <- classifier_results(test_df2$class, lda_pred2$.pred_class)[[2]][1] # lda
+e2 <- classifier_results(test_df2$class, qda_pred2$.pred_class)[[2]][1] # qda
+
+results2 <- c(d2, e2, b2, c2, a2)
+names(results2) <- c('lda', 'qda', 'knn_1', 'knn_cv', 'logistic')
+
+results <- list(results1, results2)
+
+return(results)
+
+}
+
+scenario1_results <- vector()
+scenario2_results <- vector()
+
+iterations <- 100
+
+for(i in 1:iterations) {
+  
+# generate test data
+test_df1 <- scenario(diag(2), diag(2))
+test_df2 <- scenario(matrix(c(1, -.5, -.5, 1), ncol = 2, nrow = 2, byrow = T), diag(2))
+
+a <- overall_results(test_df1, test_df2)[[1]]
+b <- overall_results(test_df1, test_df2)[[2]]
+
+scenario1_results <- rbind(scenario1_results, a)
+scenario2_results <- rbind(scenario2_results, b)
+
+}
+
+scenario1_results <- as.data.frame(scenario1_results)
+rownames(scenario1_results) <- 1:iterations
+scenario2_results <- as.data.frame(scenario2_results)
+rownames(scenario2_results) <- 1:iterations
+
+scenario1_results %>%
+  melt() %>%
+  ggplot(aes(y = value, col = variable)) +
+  geom_boxplot() +
+  labs(y = 'misclassification rate')
+
+scenario2_results %>%
+  melt() %>%
+  ggplot(aes(y = value, col = variable)) +
+  geom_boxplot() +
+  labs(y = 'misclassification rate')
+```
+
+**(b)**
+
+```{r}
+
+```
+
